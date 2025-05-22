@@ -11,6 +11,8 @@ use aws_smithy_types::{Document, Number};
 use clap::Parser;
 use gamecode_tools::{create_bedrock_dispatcher_with_schemas, schema::ToolSchemaRegistry};
 use gamecode_prompt::PromptManager;
+use gamecode_context::{SessionManager, session::{Message as ContextMessage, MessageRole}};
+use uuid::Uuid;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::Write;
@@ -46,6 +48,14 @@ struct Args {
     /// Show raw JSON sent to Bedrock
     #[arg(short, long)]
     debug: bool,
+
+    /// Session ID to continue an existing conversation
+    #[arg(long)]
+    session: Option<String>,
+
+    /// Start a new session (ignore any existing session)
+    #[arg(long)]
+    new_session: bool,
 
     /// Maximum number of retry attempts for throttling errors
     #[arg(long, default_value = "10")]
@@ -84,39 +94,72 @@ async fn main() -> Result<()> {
     let (dispatcher, schema_registry) = create_bedrock_dispatcher_with_schemas();
     let dispatcher = Arc::new(dispatcher);
 
-    // Load system prompt
-    let prompt_manager = PromptManager::new().context("Failed to create prompt manager")?;
-    let system_prompt = if let Some(prompt_name) = &args.system_prompt {
-        prompt_manager.load_prompt(prompt_name)
-            .with_context(|| format!("Failed to load prompt '{}'", prompt_name))?
+    // Setup session management
+    let mut session_manager = SessionManager::new().context("Failed to create session manager")?;
+    
+    // Load or create session based on arguments
+    let mut session = if args.new_session {
+        debug!("Creating new session");
+        session_manager.new_session()?
+    } else if let Some(session_id_str) = &args.session {
+        debug!("Loading session: {}", session_id_str);
+        let session_id = Uuid::parse_str(session_id_str)
+            .with_context(|| format!("Invalid session ID: {}", session_id_str))?;
+        session_manager.load_session(&session_id)
+            .with_context(|| format!("Failed to load session: {}", session_id))?
     } else {
-        prompt_manager.load_default().context("Failed to load default prompt")?
+        debug!("Loading latest session");
+        session_manager.load_latest()?
     };
 
-    if args.verbose {
-        if let Some(prompt_name) = &args.system_prompt {
-            debug!("Using named system prompt: {}", prompt_name);
+    debug!("Using session: {}", session.id);
+
+    // Load system prompt if this is a new session (no messages yet)
+    if session.messages.is_empty() {
+        let prompt_manager = PromptManager::new().context("Failed to create prompt manager")?;
+        let system_prompt = if let Some(prompt_name) = &args.system_prompt {
+            prompt_manager.load_prompt(prompt_name)
+                .with_context(|| format!("Failed to load prompt '{}'", prompt_name))?
         } else {
-            debug!("Using default system prompt");
+            prompt_manager.load_default().context("Failed to load default prompt")?
+        };
+
+        if args.verbose {
+            if let Some(prompt_name) = &args.system_prompt {
+                debug!("Using named system prompt: {}", prompt_name);
+            } else {
+                debug!("Using default system prompt");
+            }
         }
+
+        // Add system prompt to session
+        let system_message = ContextMessage::new(MessageRole::System, system_prompt);
+        session_manager.add_message(&mut session, system_message)?;
     }
 
-    // Combine all prompt arguments into a single string
+    // Add current user prompt to session
     let user_prompt = args.prompt.join(" ");
+    let user_message = ContextMessage::new(MessageRole::User, user_prompt);
+    session_manager.add_message(&mut session, user_message)?;
 
-    // Initial message to Claude with system prompt first, then user prompt
-    let mut messages = vec![
-        Message::builder()
-            .role(ConversationRole::User)
-            .content(ContentBlock::Text(system_prompt))
+    // Convert session messages to Bedrock format
+    let mut messages = Vec::new();
+    for context_msg in &session.messages {
+        let role = match context_msg.role {
+            MessageRole::System => ConversationRole::User, // Bedrock treats system as user
+            MessageRole::User => ConversationRole::User,
+            MessageRole::Assistant => ConversationRole::Assistant,
+            MessageRole::Tool => ConversationRole::User, // Tool messages treated as user context
+        };
+        
+        let message = Message::builder()
+            .role(role)
+            .content(ContentBlock::Text(context_msg.content.clone()))
             .build()
-            .context("Failed to build system message")?,
-        Message::builder()
-            .role(ConversationRole::User)
-            .content(ContentBlock::Text(user_prompt))
-            .build()
-            .context("Failed to build user message")?,
-    ];
+            .context("Failed to build message from session")?;
+        
+        messages.push(message);
+    }
 
     // Define tool specifications using dynamic schemas
     let tools = get_dynamic_tool_specs(&schema_registry)?;
@@ -322,8 +365,14 @@ async fn main() -> Result<()> {
             }
         }
 
-        // If no tool calls, we're done
+        // If no tool calls, save final assistant response and we're done
         if tool_calls.is_empty() {
+            if !response_text.is_empty() {
+                // Save the assistant's final response to the session
+                let assistant_message = ContextMessage::new(MessageRole::Assistant, response_text);
+                session_manager.add_message(&mut session, assistant_message)?;
+                debug!("Saved final assistant response to session");
+            }
             break;
         }
 
@@ -433,10 +482,33 @@ async fn main() -> Result<()> {
 
             messages.push(user_message);
 
+            // Save the assistant's response with tool calls to the session
+            if !response_text.is_empty() {
+                let assistant_message = ContextMessage::new(MessageRole::Assistant, response_text.clone());
+                session_manager.add_message(&mut session, assistant_message)?;
+            }
+
+            // Save tool results as a system message (for context but not displayed)
+            let tool_summary = format!("Tool execution results: {} tools executed", tool_calls.len());
+            let tool_message = ContextMessage::new(MessageRole::System, tool_summary);
+            session_manager.add_message(&mut session, tool_message)?;
+
             debug!("Continuing conversation with {} messages", messages.len());
+            debug!("Saved tool interaction to session");
             // Continue the loop to let Claude respond to the tool results
             continue;
         }
+    }
+
+    // Final session save
+    session_manager.save_session(&session)?;
+    debug!("Final session saved: {}", session.id);
+
+    // Print session info for user
+    if args.verbose {
+        println!("\n📁 Session saved: {}", session.id);
+        println!("   Total messages: {}", session.messages.len());
+        println!("   To continue this conversation, use: --session {}", session.id);
     }
 
     Ok(())

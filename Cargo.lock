@@ -641,6 +641,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -991,6 +992,7 @@ dependencies = [
  "aws-smithy-types",
  "clap",
  "futures-util",
+ "gamecode-context",
  "gamecode-prompt",
  "gamecode-tools",
  "serde",
@@ -998,6 +1000,23 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "gamecode-context"
+version = "0.1.0"
+source = "git+https://github.com/navicore/gamecode-context#31c40780967371327141e3f96b59d71365426f9a"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "home",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2605,6 +2624,10 @@ name = "uuid"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "458f7a779bf54acc9f347480ac654f68407d3aab21269a6e3c9f922acd9e2da9"
+dependencies = [
+ "getrandom 0.3.3",
+ "serde",
+]
 
 [[package]]
 name = "valuable"
