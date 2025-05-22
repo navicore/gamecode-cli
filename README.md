@@ -1,3 +1,6 @@
+[![Dependabot Updates](https://github.com/navicore/gamecode-cli/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/navicore/gamecode-cli/actions/workflows/dependabot/dependabot-updates)
+[![Rust CI](https://github.com/navicore/gamecode-cli/actions/workflows/rust-ci.yml/badge.svg)](https://github.com/navicore/gamecode-cli/actions/workflows/rust-ci.yml)
+
 # GameCode CLI
 
 A CLI tool for interacting with AWS Bedrock Anthropic Claude models (Claude 3.7 Sonnet and Claude 3.5 Haiku) with agentic capabilities through the gamecode-tools library.
