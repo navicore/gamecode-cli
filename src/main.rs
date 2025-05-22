@@ -8,38 +8,191 @@ use aws_sdk_bedrockruntime::{
     Client,
 };
 use aws_smithy_types::{Document, Number};
-use clap::Parser;
-use gamecode_tools::{create_bedrock_dispatcher_with_schemas, schema::ToolSchemaRegistry};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum, ValueHint};
+use clap_complete::{generate, Generator, Shell};
+use gamecode_context::{
+    session::{Message as ContextMessage, MessageRole},
+    SessionManager,
+};
 use gamecode_prompt::PromptManager;
-use gamecode_context::{SessionManager, session::{Message as ContextMessage, MessageRole}};
-use uuid::Uuid;
+use gamecode_tools::{create_bedrock_dispatcher_with_schemas, schema::ToolSchemaRegistry};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::debug;
+use uuid::Uuid;
+
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
+struct ModelConfig {
+    pub models: HashMap<String, String>,
+    pub default: String,
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        let mut models = HashMap::new();
+        models.insert(
+            "claude-3.7-sonnet".to_string(),
+            "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
+        );
+        models.insert(
+            "claude-3-5-sonnet".to_string(),
+            "anthropic.claude-3-5-sonnet-20240620-v1:0".to_string(),
+        );
+        models.insert(
+            "claude-3-5-haiku".to_string(),
+            "anthropic.claude-3-5-haiku-20241022-v1:0".to_string(),
+        );
+        models.insert(
+            "claude-3-sonnet".to_string(),
+            "anthropic.claude-3-sonnet-20240229-v1:0".to_string(),
+        );
+        models.insert(
+            "claude-3-haiku".to_string(),
+            "anthropic.claude-3-haiku-20240307-v1:0".to_string(),
+        );
+
+        Self {
+            models,
+            default: "claude-3.7-sonnet".to_string(),
+        }
+    }
+}
+
+impl ModelConfig {
+    fn config_path() -> Result<PathBuf> {
+        let home = std::env::var("HOME").context("HOME environment variable not set")?;
+        Ok(PathBuf::from(home)
+            .join(".config")
+            .join("gamecode-cli")
+            .join("models.json"))
+    }
+
+    fn load_or_create() -> Result<Self> {
+        let config_path = Self::config_path()?;
+
+        if config_path.exists() {
+            let content = fs::read_to_string(&config_path).with_context(|| {
+                format!("Failed to read config file: {}", config_path.display())
+            })?;
+            let config: ModelConfig = serde_json::from_str(&content).with_context(|| {
+                format!("Failed to parse config file: {}", config_path.display())
+            })?;
+            Ok(config)
+        } else {
+            let config = Self::default();
+            config.save()?;
+            Ok(config)
+        }
+    }
+
+    fn save(&self) -> Result<()> {
+        let config_path = Self::config_path()?;
+
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create config directory: {}", parent.display())
+            })?;
+        }
+
+        let content = serde_json::to_string_pretty(self).context("Failed to serialize config")?;
+        fs::write(&config_path, content)
+            .with_context(|| format!("Failed to write config file: {}", config_path.display()))?;
+
+        println!("Model config saved to: {}", config_path.display());
+        Ok(())
+    }
+
+    fn get_bedrock_id(&self, model_name: &str) -> Option<&String> {
+        self.models.get(model_name)
+    }
+
+    fn available_models(&self) -> Vec<String> {
+        let mut models: Vec<String> = self.models.keys().cloned().collect();
+        models.sort();
+        models
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+enum Region {
+    #[value(name = "us-east-1")]
+    UsEast1,
+    #[value(name = "us-east-2")]
+    UsEast2,
+    #[value(name = "us-west-1")]
+    UsWest1,
+    #[value(name = "us-west-2")]
+    UsWest2,
+    #[value(name = "eu-west-1")]
+    EuWest1,
+    #[value(name = "eu-west-2")]
+    EuWest2,
+    #[value(name = "eu-central-1")]
+    EuCentral1,
+    #[value(name = "ap-southeast-1")]
+    ApSoutheast1,
+    #[value(name = "ap-southeast-2")]
+    ApSoutheast2,
+    #[value(name = "ap-northeast-1")]
+    ApNortheast1,
+}
+
+impl Region {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Region::UsEast1 => "us-east-1",
+            Region::UsEast2 => "us-east-2",
+            Region::UsWest1 => "us-west-1",
+            Region::UsWest2 => "us-west-2",
+            Region::EuWest1 => "eu-west-1",
+            Region::EuWest2 => "eu-west-2",
+            Region::EuCentral1 => "eu-central-1",
+            Region::ApSoutheast1 => "ap-southeast-1",
+            Region::ApSoutheast2 => "ap-southeast-2",
+            Region::ApNortheast1 => "ap-northeast-1",
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "gamecode-cli")]
 #[command(about = "CLI for AWS Bedrock Claude with gamecode-tools integration")]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// The text prompt to send to Claude
-    #[arg(required = true)]
+    #[arg(long, short = 'p', value_hint = ValueHint::Other)]
     prompt: Vec<String>,
 
     /// Named prompt to use for system prompt (uses default if not specified)
-    #[arg(long)]
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new([
+        "default",
+        "coding",
+        "code-review",
+        "debugging",
+    ]))]
     system_prompt: Option<String>,
 
-    /// The model to use (default: anthropic.claude-3-5-sonnet-20240620-v1:0)
-    #[arg(long, default_value = "anthropic.claude-3-5-sonnet-20240620-v1:0")]
-    model: String,
+    /// The model to use
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new([
+        "claude-3.7-sonnet",
+        "claude-3-5-sonnet",
+        "claude-3-5-haiku",
+        "claude-3-sonnet",
+        "claude-3-haiku",
+    ]))]
+    model: Option<String>,
 
     /// AWS region
-    #[arg(long, default_value = "us-east-1")]
-    region: String,
+    #[arg(long, default_value = "us-west-2")]
+    region: Region,
 
     /// Enable verbose logging
     #[arg(short, long)]
@@ -49,8 +202,8 @@ struct Args {
     #[arg(short, long)]
     debug: bool,
 
-    /// Session ID to continue an existing conversation
-    #[arg(long)]
+    /// Session ID to continue an existing conversation (use 'gamecode-cli sessions list' to see available sessions)
+    #[arg(long, value_hint = ValueHint::Other)]
     session: Option<String>,
 
     /// Start a new session (ignore any existing session)
@@ -66,9 +219,255 @@ struct Args {
     initial_retry_delay_ms: u64,
 }
 
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Generate shell completions
+    #[command(arg_required_else_help = true)]
+    Completions {
+        /// The shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+    /// Manage model configuration
+    Models {
+        #[command(subcommand)]
+        action: ModelAction,
+    },
+    /// Manage prompts
+    Prompts {
+        #[command(subcommand)]
+        action: PromptAction,
+    },
+    /// Manage sessions
+    Sessions {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ModelAction {
+    /// List available models
+    List,
+    /// Show current default model
+    Default,
+    /// Set default model
+    SetDefault {
+        /// Model name to set as default
+        model: String,
+    },
+    /// Add a new model
+    Add {
+        /// Short name for the model
+        name: String,
+        /// Full Bedrock model ID
+        bedrock_id: String,
+    },
+    /// Remove a model
+    Remove {
+        /// Model name to remove
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PromptAction {
+    /// List available prompts
+    List,
+    /// Show a specific prompt
+    Show {
+        /// Prompt name to show
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SessionAction {
+    /// List available sessions
+    List,
+    /// Show session details
+    Show {
+        /// Session ID to show
+        id: String,
+    },
+    /// Delete a session
+    Delete {
+        /// Session ID to delete
+        id: String,
+    },
+}
+
+fn print_completions<G: Generator>(generator: G, cmd: &mut clap::Command) {
+    generate(
+        generator,
+        cmd,
+        cmd.get_name().to_string(),
+        &mut std::io::stdout(),
+    );
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+
+    // Handle subcommands
+    match args.command {
+        Some(Commands::Completions { shell }) => {
+            let mut cmd = Args::command();
+            print_completions(shell, &mut cmd);
+            return Ok(());
+        }
+        Some(Commands::Models { action }) => {
+            let mut model_config =
+                ModelConfig::load_or_create().context("Failed to load model configuration")?;
+
+            match action {
+                ModelAction::List => {
+                    println!("Available models:");
+                    for model in model_config.available_models() {
+                        let bedrock_id = model_config.get_bedrock_id(&model).unwrap();
+                        let is_default = model == model_config.default;
+                        println!(
+                            "  {} -> {} {}",
+                            model,
+                            bedrock_id,
+                            if is_default { "(default)" } else { "" }
+                        );
+                    }
+                }
+                ModelAction::Default => {
+                    let bedrock_id = model_config.get_bedrock_id(&model_config.default).unwrap();
+                    println!("Default model: {} -> {}", model_config.default, bedrock_id);
+                }
+                ModelAction::SetDefault { model } => {
+                    if model_config.get_bedrock_id(&model).is_none() {
+                        eprintln!(
+                            "Error: Unknown model '{}'. Available models: {:?}",
+                            model,
+                            model_config.available_models()
+                        );
+                        std::process::exit(1);
+                    }
+                    model_config.default = model.clone();
+                    model_config.save()?;
+                    println!("Default model set to: {}", model);
+                }
+                ModelAction::Add { name, bedrock_id } => {
+                    model_config.models.insert(name.clone(), bedrock_id.clone());
+                    model_config.save()?;
+                    println!("Added model: {} -> {}", name, bedrock_id);
+                }
+                ModelAction::Remove { name } => {
+                    if name == model_config.default {
+                        eprintln!(
+                            "Error: Cannot remove the default model. Set a different default first."
+                        );
+                        std::process::exit(1);
+                    }
+                    if model_config.models.remove(&name).is_some() {
+                        model_config.save()?;
+                        println!("Removed model: {}", name);
+                    } else {
+                        eprintln!("Error: Model '{}' not found", name);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            return Ok(());
+        }
+        Some(Commands::Prompts { action }) => {
+            let prompt_manager = PromptManager::new().context("Failed to create prompt manager")?;
+
+            match action {
+                PromptAction::List => match prompt_manager.list_prompts() {
+                    Ok(prompts) => {
+                        println!("Available prompts:");
+                        for prompt in prompts {
+                            println!("  {}", prompt);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error listing prompts: {}", e);
+                        std::process::exit(1);
+                    }
+                },
+                PromptAction::Show { name } => match prompt_manager.load_prompt(&name) {
+                    Ok(content) => {
+                        println!("Prompt '{}': {}", name, content);
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading prompt: {}", e);
+                        std::process::exit(1);
+                    }
+                },
+            }
+            return Ok(());
+        }
+        Some(Commands::Sessions { action }) => {
+            let mut session_manager = SessionManager::new().context("Failed to create session manager")?;
+            
+            match action {
+                SessionAction::List => {
+                    match session_manager.list_sessions() {
+                        Ok(sessions) => {
+                            println!("Available sessions:");
+                            for session_info in sessions {
+                                println!("  {} (created: {:?}, messages: {})", 
+                                    session_info.id, 
+                                    session_info.created_at,
+                                    session_info.message_count
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error listing sessions: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                SessionAction::Show { id } => {
+                    let session_id = Uuid::parse_str(&id)
+                        .with_context(|| format!("Invalid session ID: {}", id))?;
+                    match session_manager.load_session(&session_id) {
+                        Ok(session) => {
+                            println!("Session: {}", session.id);
+                            println!("Created: {:?}", session.created_at);
+                            println!("Updated: {:?}", session.updated_at);
+                            println!("Messages: {}", session.messages.len());
+                            for (i, msg) in session.messages.iter().enumerate() {
+                                println!("  {}: {:?} - {}", i + 1, msg.role, 
+                                    if msg.content.len() > 100 { 
+                                        format!("{}...", &msg.content[..100])
+                                    } else { 
+                                        msg.content.clone() 
+                                    }
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error loading session: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                SessionAction::Delete { id } => {
+                    // For now, just show that the feature would delete the session
+                    // since the SessionManager might not have a delete method yet
+                    println!("Session deletion feature not yet implemented for {}", id);
+                    println!("Sessions are stored as files and can be manually deleted if needed");
+                }
+            }
+            return Ok(());
+        }
+        None => {}
+    }
+
+    // Require prompt when not using subcommands
+    if args.prompt.is_empty() {
+        eprintln!("Error: prompt is required when not using a subcommand");
+        eprintln!("Use --prompt \"your message here\" or -p \"your message here\"");
+        std::process::exit(1);
+    }
 
     // Setup logging
     let log_level = if args.verbose {
@@ -86,9 +485,27 @@ async fn main() -> Result<()> {
         .await;
 
     // Log which region we're using
-    debug!("Using AWS region: {}", args.region);
+    debug!("Using AWS region: {}", args.region.as_str());
 
     let bedrock_client = Client::new(&config);
+
+    // Load model configuration
+    let model_config =
+        ModelConfig::load_or_create().context("Failed to load model configuration")?;
+
+    // Determine which model to use
+    let selected_model = args.model.as_deref().unwrap_or(&model_config.default);
+    let bedrock_model_id = model_config
+        .get_bedrock_id(selected_model)
+        .with_context(|| {
+            format!(
+                "Unknown model '{}'. Available models: {:?}",
+                selected_model,
+                model_config.available_models()
+            )
+        })?;
+
+    debug!("Using model: {} -> {}", selected_model, bedrock_model_id);
 
     // Setup gamecode-tools dispatcher with schema generation
     let (dispatcher, schema_registry) = create_bedrock_dispatcher_with_schemas();
@@ -96,7 +513,7 @@ async fn main() -> Result<()> {
 
     // Setup session management
     let mut session_manager = SessionManager::new().context("Failed to create session manager")?;
-    
+
     // Load or create session based on arguments
     let mut session = if args.new_session {
         debug!("Creating new session");
@@ -105,7 +522,8 @@ async fn main() -> Result<()> {
         debug!("Loading session: {}", session_id_str);
         let session_id = Uuid::parse_str(session_id_str)
             .with_context(|| format!("Invalid session ID: {}", session_id_str))?;
-        session_manager.load_session(&session_id)
+        session_manager
+            .load_session(&session_id)
             .with_context(|| format!("Failed to load session: {}", session_id))?
     } else {
         debug!("Loading latest session");
@@ -118,10 +536,13 @@ async fn main() -> Result<()> {
     if session.messages.is_empty() {
         let prompt_manager = PromptManager::new().context("Failed to create prompt manager")?;
         let system_prompt = if let Some(prompt_name) = &args.system_prompt {
-            prompt_manager.load_prompt(prompt_name)
+            prompt_manager
+                .load_prompt(prompt_name)
                 .with_context(|| format!("Failed to load prompt '{}'", prompt_name))?
         } else {
-            prompt_manager.load_default().context("Failed to load default prompt")?
+            prompt_manager
+                .load_default()
+                .context("Failed to load default prompt")?
         };
 
         if args.verbose {
@@ -151,13 +572,13 @@ async fn main() -> Result<()> {
             MessageRole::Assistant => ConversationRole::Assistant,
             MessageRole::Tool => ConversationRole::User, // Tool messages treated as user context
         };
-        
+
         let message = Message::builder()
             .role(role)
             .content(ContentBlock::Text(context_msg.content.clone()))
             .build()
             .context("Failed to build message from session")?;
-        
+
         messages.push(message);
     }
 
@@ -194,7 +615,7 @@ async fn main() -> Result<()> {
         let mut response = {
             let messages_clone = messages.clone();
             let bedrock_client_clone = bedrock_client.clone();
-            let model_clone = args.model.clone();
+            let model_clone = bedrock_model_id.clone();
             let inference_config_clone = inference_config.clone();
             let tool_config_clone = tool_config.clone();
 
@@ -218,7 +639,7 @@ async fn main() -> Result<()> {
                         println!("\n🔍 DEBUG: Bedrock Request Details:");
                         println!("Model ID: {}", &model_clone);
                         println!("Messages ({}):", messages_clone.len());
-                        
+
                         for (i, msg) in messages_clone.iter().enumerate() {
                             println!("  Message {}: Role = {:?}", i + 1, msg.role());
                             for (j, content) in msg.content().iter().enumerate() {
@@ -232,31 +653,31 @@ async fn main() -> Result<()> {
                                         println!("    Content {}: Text = \"{}\"", j + 1, preview);
                                     },
                                     ContentBlock::ToolUse(tool_use) => {
-                                        println!("    Content {}: ToolUse = {{ name: \"{}\", id: \"{}\" }}", 
+                                        println!("    Content {}: ToolUse = {{ name: \"{}\", id: \"{}\" }}",
                                                j + 1, tool_use.name(), tool_use.tool_use_id());
                                     },
                                     ContentBlock::ToolResult(tool_result) => {
-                                        println!("    Content {}: ToolResult = {{ id: \"{}\" }}", 
+                                        println!("    Content {}: ToolResult = {{ id: \"{}\" }}",
                                                j + 1, tool_result.tool_use_id());
                                     },
                                     _ => println!("    Content {}: Other", j + 1)
                                 }
                             }
                         }
-                        
+
                         println!("Inference Config:");
                         println!("  Temperature: {:?}", inference_config_clone.temperature());
                         println!("  Top P: {:?}", inference_config_clone.top_p());
                         println!("  Max Tokens: {:?}", inference_config_clone.max_tokens());
-                        
+
                         let tools = tool_config_clone.tools();
                         if !tools.is_empty() {
                             println!("Tools ({}):", tools.len());
                             for (i, tool) in tools.iter().enumerate() {
                                 match tool.as_tool_spec() {
                                     Ok(spec) => {
-                                        println!("  Tool {}: {} - {}", 
-                                               i + 1, 
+                                        println!("  Tool {}: {} - {}",
+                                               i + 1,
                                                spec.name(),
                                                spec.description().unwrap_or("no description"));
                                     },
@@ -484,12 +905,16 @@ async fn main() -> Result<()> {
 
             // Save the assistant's response with tool calls to the session
             if !response_text.is_empty() {
-                let assistant_message = ContextMessage::new(MessageRole::Assistant, response_text.clone());
+                let assistant_message =
+                    ContextMessage::new(MessageRole::Assistant, response_text.clone());
                 session_manager.add_message(&mut session, assistant_message)?;
             }
 
             // Save tool results as a system message (for context but not displayed)
-            let tool_summary = format!("Tool execution results: {} tools executed", tool_calls.len());
+            let tool_summary = format!(
+                "Tool execution results: {} tools executed",
+                tool_calls.len()
+            );
             let tool_message = ContextMessage::new(MessageRole::System, tool_summary);
             session_manager.add_message(&mut session, tool_message)?;
 
@@ -508,12 +933,14 @@ async fn main() -> Result<()> {
     if args.verbose {
         println!("\n📁 Session saved: {}", session.id);
         println!("   Total messages: {}", session.messages.len());
-        println!("   To continue this conversation, use: --session {}", session.id);
+        println!(
+            "   To continue this conversation, use: --session {}",
+            session.id
+        );
     }
 
     Ok(())
 }
-
 
 // Helper function to extract concise error information
 fn extract_error_summary(error_str: &str) -> String {
