@@ -2,8 +2,9 @@
 name = "gamecode-cli"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+authors = ["Ed Sweeney <ed@onextent.com>"]
 description = "CLI for AWS Bedrock Anthropic Claude with gamecode-tools integration"
-authors = ["Your Name <your.email@example.com>"]
 
 [dependencies]
 gamecode-tools = { git = "https://github.com/navicore/gamecode-tools" }

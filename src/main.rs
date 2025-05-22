@@ -150,6 +150,7 @@ async fn main() -> Result<()> {
         // Process streaming response
         let mut current_tool_use: Option<(String, String, String)> = None; // (name, id, input)
         let mut response_text = String::new();
+        #[allow(unused_variables)]
         let mut role = String::new();
         let mut tool_calls = Vec::new();
         let mut tool_use_blocks = Vec::new();
@@ -164,6 +165,7 @@ async fn main() -> Result<()> {
                 Ok(Some(event)) => {
                     // Process valid event
                     // Handle different event types
+                    #[allow(unused_assignments)]
                     if let Ok(message_start) = event.as_message_start() {
                         role = message_start.role().as_str().to_string();
                     }
@@ -554,6 +556,7 @@ fn json_value_to_document(value: &Value) -> Document {
 }
 
 // Helper function to create a JSON schema Document
+#[allow(dead_code)]
 fn create_schema_document(properties: Vec<(&str, &str, &str)>, required: Vec<&str>) -> Document {
     let mut props = HashMap::new();
     for (name, type_str, desc) in properties {
@@ -603,6 +606,7 @@ fn get_dynamic_tool_specs(schema_registry: &ToolSchemaRegistry) -> Result<Vec<To
 }
 
 // Legacy function to define tool specifications (kept for reference)
+#[allow(dead_code)]
 fn get_tool_specs() -> Result<Vec<Tool>> {
     let tool_specs = vec![
         // File operations
