@@ -2,9 +2,8 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::{generate, Generator, Shell};
 use gamecode_backend::{
-    ChatRequest, LLMBackend, Message as BackendMessage, 
-    MessageRole as BackendMessageRole, RetryConfig, Tool as BackendTool, 
-    ContentBlock, InferenceConfig,
+    ChatRequest, ContentBlock, InferenceConfig, LLMBackend, Message as BackendMessage,
+    MessageRole as BackendMessageRole, RetryConfig, Tool as BackendTool,
 };
 use gamecode_bedrock::BedrockBackend;
 use gamecode_context::{
@@ -14,105 +13,20 @@ use gamecode_context::{
 use gamecode_prompt::PromptManager;
 use gamecode_tools::{create_bedrock_dispatcher_with_schemas, schema::ToolSchemaRegistry};
 use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
 use uuid::Uuid;
 
-#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
-struct ModelConfig {
-    pub models: HashMap<String, String>,
-    pub default: String,
-}
-
-impl Default for ModelConfig {
-    fn default() -> Self {
-        let mut models = HashMap::new();
-        models.insert(
-            "claude-3.7-sonnet".to_string(),
-            "us.anthropic.claude-3-7-sonnet-20250219-v1:0".to_string(),
-        );
-        models.insert(
-            "claude-3-5-sonnet".to_string(),
-            "anthropic.claude-3-5-sonnet-20240620-v1:0".to_string(),
-        );
-        models.insert(
-            "claude-3-5-haiku".to_string(),
-            "anthropic.claude-3-5-haiku-20241022-v1:0".to_string(),
-        );
-        models.insert(
-            "claude-3-sonnet".to_string(),
-            "anthropic.claude-3-sonnet-20240229-v1:0".to_string(),
-        );
-        models.insert(
-            "claude-3-haiku".to_string(),
-            "anthropic.claude-3-haiku-20240307-v1:0".to_string(),
-        );
-
-        Self {
-            models,
-            default: "claude-3.7-sonnet".to_string(),
-        }
-    }
-}
-
-impl ModelConfig {
-    fn config_path() -> Result<PathBuf> {
-        let home = std::env::var("HOME").context("HOME environment variable not set")?;
-        Ok(PathBuf::from(home)
-            .join(".config")
-            .join("gamecode-cli")
-            .join("models.json"))
-    }
-
-    fn load_or_create() -> Result<Self> {
-        let config_path = Self::config_path()?;
-
-        if config_path.exists() {
-            let content = fs::read_to_string(&config_path).with_context(|| {
-                format!("Failed to read config file: {}", config_path.display())
-            })?;
-            let config: ModelConfig = serde_json::from_str(&content).with_context(|| {
-                format!("Failed to parse config file: {}", config_path.display())
-            })?;
-            Ok(config)
-        } else {
-            let config = Self::default();
-            config.save()?;
-            Ok(config)
-        }
-    }
-
-    fn save(&self) -> Result<()> {
-        let config_path = Self::config_path()?;
-
-        if let Some(parent) = config_path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create config directory: {}", parent.display())
-            })?;
-        }
-
-        let content = serde_json::to_string_pretty(self).context("Failed to serialize config")?;
-        fs::write(&config_path, content)
-            .with_context(|| format!("Failed to write config file: {}", config_path.display()))?;
-
-        println!("Model config saved to: {}", config_path.display());
-        Ok(())
-    }
-
-    fn get_bedrock_id(&self, model_name: &str) -> Option<&String> {
-        self.models.get(model_name)
-    }
-
-    fn available_models(&self) -> Vec<String> {
-        let mut models: Vec<String> = self.models.keys().cloned().collect();
-        models.sort();
-        models
-    }
+// Backend factory function to create the appropriate backend
+async fn create_backend(region: &str) -> Result<Box<dyn LLMBackend>> {
+    // For now, we only support Bedrock, but this could be expanded
+    // to support other backends (OpenAI, etc.) based on configuration
+    let backend = BedrockBackend::new_with_region(region)
+        .await
+        .context("Failed to create backend")?;
+    Ok(Box::new(backend))
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -158,7 +72,7 @@ impl Region {
 
 #[derive(Parser, Debug)]
 #[command(name = "gamecode-cli")]
-#[command(about = "CLI for AWS Bedrock Claude with gamecode-tools integration")]
+#[command(about = "CLI for Claude AI with gamecode-tools integration")]
 struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -177,13 +91,7 @@ struct Args {
     system_prompt: Option<String>,
 
     /// The model to use
-    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new([
-        "claude-3.7-sonnet",
-        "claude-3-5-sonnet",
-        "claude-3-5-haiku",
-        "claude-3-sonnet",
-        "claude-3-haiku",
-    ]))]
+    #[arg(long)]
     model: Option<String>,
 
     /// AWS region
@@ -194,7 +102,7 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Show raw JSON sent to Bedrock
+    /// Show debug information
     #[arg(short, long)]
     debug: bool,
 
@@ -224,11 +132,8 @@ enum Commands {
         #[arg(value_enum)]
         shell: Shell,
     },
-    /// Manage model configuration
-    Models {
-        #[command(subcommand)]
-        action: ModelAction,
-    },
+    /// List available models
+    Models,
     /// Manage prompts
     Prompts {
         #[command(subcommand)]
@@ -238,31 +143,6 @@ enum Commands {
     Sessions {
         #[command(subcommand)]
         action: SessionAction,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum ModelAction {
-    /// List available models
-    List,
-    /// Show current default model
-    Default,
-    /// Set default model
-    SetDefault {
-        /// Model name to set as default
-        model: String,
-    },
-    /// Add a new model
-    Add {
-        /// Short name for the model
-        name: String,
-        /// Full Bedrock model ID
-        bedrock_id: String,
-    },
-    /// Remove a model
-    Remove {
-        /// Model name to remove
-        name: String,
     },
 }
 
@@ -329,61 +209,14 @@ async fn main() -> Result<()> {
             print_completions(shell, &mut cmd);
             return Ok(());
         }
-        Some(Commands::Models { action }) => {
-            let mut model_config =
-                ModelConfig::load_or_create().context("Failed to load model configuration")?;
+        Some(Commands::Models) => {
+            // Create a backend to query supported models
+            let backend = create_backend(args.region.as_str()).await?;
+            let supported_models = backend.supported_models();
 
-            match action {
-                ModelAction::List => {
-                    println!("Available models:");
-                    for model in model_config.available_models() {
-                        let bedrock_id = model_config.get_bedrock_id(&model).unwrap();
-                        let is_default = model == model_config.default;
-                        println!(
-                            "  {} -> {} {}",
-                            model,
-                            bedrock_id,
-                            if is_default { "(default)" } else { "" }
-                        );
-                    }
-                }
-                ModelAction::Default => {
-                    let bedrock_id = model_config.get_bedrock_id(&model_config.default).unwrap();
-                    println!("Default model: {} -> {}", model_config.default, bedrock_id);
-                }
-                ModelAction::SetDefault { model } => {
-                    if model_config.get_bedrock_id(&model).is_none() {
-                        eprintln!(
-                            "Error: Unknown model '{}'. Available models: {:?}",
-                            model,
-                            model_config.available_models()
-                        );
-                        std::process::exit(1);
-                    }
-                    model_config.default = model.clone();
-                    model_config.save()?;
-                    println!("Default model set to: {}", model);
-                }
-                ModelAction::Add { name, bedrock_id } => {
-                    model_config.models.insert(name.clone(), bedrock_id.clone());
-                    model_config.save()?;
-                    println!("Added model: {} -> {}", name, bedrock_id);
-                }
-                ModelAction::Remove { name } => {
-                    if name == model_config.default {
-                        eprintln!(
-                            "Error: Cannot remove the default model. Set a different default first."
-                        );
-                        std::process::exit(1);
-                    }
-                    if model_config.models.remove(&name).is_some() {
-                        model_config.save()?;
-                        println!("Removed model: {}", name);
-                    } else {
-                        eprintln!("Error: Model '{}' not found", name);
-                        std::process::exit(1);
-                    }
-                }
+            println!("Supported models:");
+            for model in supported_models {
+                println!("  {}", model);
             }
             return Ok(());
         }
@@ -416,27 +249,27 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Some(Commands::Sessions { action }) => {
-            let mut session_manager = SessionManager::new().context("Failed to create session manager")?;
-            
+            let mut session_manager =
+                SessionManager::new().context("Failed to create session manager")?;
+
             match action {
-                SessionAction::List => {
-                    match session_manager.list_sessions() {
-                        Ok(sessions) => {
-                            println!("Available sessions:");
-                            for session_info in sessions {
-                                println!("  {} (created: {:?}, messages: {})", 
-                                    session_info.id, 
-                                    session_info.created_at,
-                                    session_info.message_count
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Error listing sessions: {}", e);
-                            std::process::exit(1);
+                SessionAction::List => match session_manager.list_sessions() {
+                    Ok(sessions) => {
+                        println!("Available sessions:");
+                        for session_info in sessions {
+                            println!(
+                                "  {} (created: {:?}, messages: {})",
+                                session_info.id,
+                                session_info.created_at,
+                                session_info.message_count
+                            );
                         }
                     }
-                }
+                    Err(e) => {
+                        eprintln!("Error listing sessions: {}", e);
+                        std::process::exit(1);
+                    }
+                },
                 SessionAction::Show { id } => {
                     let session_id = Uuid::parse_str(&id)
                         .with_context(|| format!("Invalid session ID: {}", id))?;
@@ -447,11 +280,14 @@ async fn main() -> Result<()> {
                             println!("Updated: {:?}", session.updated_at);
                             println!("Messages: {}", session.messages.len());
                             for (i, msg) in session.messages.iter().enumerate() {
-                                println!("  {}: {:?} - {}", i + 1, msg.role, 
-                                    if msg.content.len() > 100 { 
+                                println!(
+                                    "  {}: {:?} - {}",
+                                    i + 1,
+                                    msg.role,
+                                    if msg.content.len() > 100 {
                                         format!("{}...", &msg.content[..100])
-                                    } else { 
-                                        msg.content.clone() 
+                                    } else {
+                                        msg.content.clone()
                                     }
                                 );
                             }
@@ -491,30 +327,12 @@ async fn main() -> Result<()> {
 
     // Create backend with region and model configuration
     debug!("Using AWS region: {}", args.region.as_str());
-    
-    let backend: Box<dyn LLMBackend> = Box::new(
-        BedrockBackend::new_with_region(args.region.as_str())
-            .await
-            .context("Failed to create Bedrock backend")?
-    );
 
-    // Load model configuration for display purposes
-    let model_config =
-        ModelConfig::load_or_create().context("Failed to load model configuration")?;
+    let backend = create_backend(args.region.as_str()).await?;
 
-    // Determine which model to use
-    let selected_model = args.model.as_deref().unwrap_or(&model_config.default);
-    let bedrock_model_id = model_config
-        .get_bedrock_id(selected_model)
-        .with_context(|| {
-            format!(
-                "Unknown model '{}'. Available models: {:?}",
-                selected_model,
-                model_config.available_models()
-            )
-        })?;
-
-    debug!("Using model: {} -> {}", selected_model, bedrock_model_id);
+    // Use default model if none specified
+    let selected_model = args.model.as_deref().unwrap_or("claude-3.7-sonnet");
+    debug!("Using model: {}", selected_model);
 
     // Setup gamecode-tools dispatcher with schema generation
     let (dispatcher, schema_registry) = create_bedrock_dispatcher_with_schemas();
@@ -577,7 +395,7 @@ async fn main() -> Result<()> {
     for context_msg in &session.messages {
         let role = match context_msg.role {
             ContextMessageRole::System => BackendMessageRole::System,
-            ContextMessageRole::User => BackendMessageRole::User, 
+            ContextMessageRole::User => BackendMessageRole::User,
             ContextMessageRole::Assistant => BackendMessageRole::Assistant,
             ContextMessageRole::Tool => BackendMessageRole::User, // Tool messages treated as user context
         };
@@ -597,10 +415,12 @@ async fn main() -> Result<()> {
         verbose: args.verbose,
     };
 
-
     // Main conversation loop using the backend
     loop {
-        debug!("Starting conversation turn with {} messages", messages.len());
+        debug!(
+            "Starting conversation turn with {} messages",
+            messages.len()
+        );
 
         // Create chat request
         let chat_request = ChatRequest {
@@ -622,14 +442,17 @@ async fn main() -> Result<()> {
             .context("Failed to get response from backend")?;
 
         // Print the response text
-        let content = response.message.content.iter()
+        let content = response
+            .message
+            .content
+            .iter()
             .filter_map(|block| match block {
                 ContentBlock::Text(text) => Some(text.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()
             .join("");
-        
+
         if !content.is_empty() {
             print!("{}", content);
             std::io::stdout().flush().unwrap();
@@ -666,7 +489,10 @@ async fn main() -> Result<()> {
                         .unwrap_or_else(|_| "<invalid json>".to_string())
                 );
             } else {
-                println!("\n🔧 Executing tool: {} with params: {}", tool_call.name, tool_call.input);
+                println!(
+                    "\n🔧 Executing tool: {} with params: {}",
+                    tool_call.name, tool_call.input
+                );
             }
 
             debug!("Executing tool: {}", tool_call.name);
@@ -724,7 +550,10 @@ async fn main() -> Result<()> {
             session_manager.add_message(&mut session, assistant_message)?;
         }
 
-        let tool_summary = format!("Tool execution results: {} tools executed", response.tool_calls.len());
+        let tool_summary = format!(
+            "Tool execution results: {} tools executed",
+            response.tool_calls.len()
+        );
         let tool_message = ContextMessage::new(MessageRole::System, tool_summary);
         session_manager.add_message(&mut session, tool_message)?;
 
@@ -748,6 +577,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-
-
-
