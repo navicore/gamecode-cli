@@ -10,6 +10,7 @@ use aws_sdk_bedrockruntime::{
 use aws_smithy_types::{Document, Number};
 use clap::Parser;
 use gamecode_tools::{create_bedrock_dispatcher_with_schemas, schema::ToolSchemaRegistry};
+use gamecode_prompt::PromptManager;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::Write;
@@ -25,6 +26,10 @@ struct Args {
     /// The text prompt to send to Claude
     #[arg(required = true)]
     prompt: Vec<String>,
+
+    /// Named prompt to use for system prompt (uses default if not specified)
+    #[arg(long)]
+    system_prompt: Option<String>,
 
     /// The model to use (default: anthropic.claude-3-5-sonnet-20240620-v1:0)
     #[arg(long, default_value = "anthropic.claude-3-5-sonnet-20240620-v1:0")]
@@ -75,15 +80,39 @@ async fn main() -> Result<()> {
     let (dispatcher, schema_registry) = create_bedrock_dispatcher_with_schemas();
     let dispatcher = Arc::new(dispatcher);
 
+    // Load system prompt
+    let prompt_manager = PromptManager::new().context("Failed to create prompt manager")?;
+    let system_prompt = if let Some(prompt_name) = &args.system_prompt {
+        prompt_manager.load_prompt(prompt_name)
+            .with_context(|| format!("Failed to load prompt '{}'", prompt_name))?
+    } else {
+        prompt_manager.load_default().context("Failed to load default prompt")?
+    };
+
+    if args.verbose {
+        if let Some(prompt_name) = &args.system_prompt {
+            debug!("Using named system prompt: {}", prompt_name);
+        } else {
+            debug!("Using default system prompt");
+        }
+    }
+
     // Combine all prompt arguments into a single string
     let user_prompt = args.prompt.join(" ");
 
-    // Initial message to Claude
-    let mut messages = vec![Message::builder()
-        .role(ConversationRole::User)
-        .content(ContentBlock::Text(user_prompt))
-        .build()
-        .context("Failed to build message")?];
+    // Initial message to Claude with system prompt first, then user prompt
+    let mut messages = vec![
+        Message::builder()
+            .role(ConversationRole::User)
+            .content(ContentBlock::Text(system_prompt))
+            .build()
+            .context("Failed to build system message")?,
+        Message::builder()
+            .role(ConversationRole::User)
+            .content(ContentBlock::Text(user_prompt))
+            .build()
+            .context("Failed to build user message")?,
+    ];
 
     // Define tool specifications using dynamic schemas
     let tools = get_dynamic_tool_specs(&schema_registry)?;
@@ -351,6 +380,7 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
 
 // Helper function to extract concise error information
 fn extract_error_summary(error_str: &str) -> String {
