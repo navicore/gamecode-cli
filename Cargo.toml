@@ -8,6 +8,7 @@ description = "CLI for AWS Bedrock Anthropic Claude with gamecode-tools integrat
 
 [dependencies]
 gamecode-tools = { git = "https://github.com/navicore/gamecode-tools" }
+gamecode-prompt = { git = "https://github.com/navicore/gamecode-prompt" }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

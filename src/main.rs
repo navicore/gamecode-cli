@@ -10,6 +10,7 @@ use aws_sdk_bedrockruntime::{
 use aws_smithy_types::{Document, Number};
 use clap::Parser;
 use gamecode_tools::{create_bedrock_dispatcher_with_schemas, schema::ToolSchemaRegistry};
+use gamecode_prompt::PromptManager;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::Write;
@@ -26,6 +27,10 @@ struct Args {
     #[arg(required = true)]
     prompt: Vec<String>,
 
+    /// Named prompt to use for system prompt (uses default if not specified)
+    #[arg(long)]
+    system_prompt: Option<String>,
+
     /// The model to use (default: anthropic.claude-3-5-sonnet-20240620-v1:0)
     #[arg(long, default_value = "anthropic.claude-3-5-sonnet-20240620-v1:0")]
     model: String,
@@ -37,6 +42,10 @@ struct Args {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    /// Show raw JSON sent to Bedrock
+    #[arg(short, long)]
+    debug: bool,
 
     /// Maximum number of retry attempts for throttling errors
     #[arg(long, default_value = "10")]
@@ -75,15 +84,39 @@ async fn main() -> Result<()> {
     let (dispatcher, schema_registry) = create_bedrock_dispatcher_with_schemas();
     let dispatcher = Arc::new(dispatcher);
 
+    // Load system prompt
+    let prompt_manager = PromptManager::new().context("Failed to create prompt manager")?;
+    let system_prompt = if let Some(prompt_name) = &args.system_prompt {
+        prompt_manager.load_prompt(prompt_name)
+            .with_context(|| format!("Failed to load prompt '{}'", prompt_name))?
+    } else {
+        prompt_manager.load_default().context("Failed to load default prompt")?
+    };
+
+    if args.verbose {
+        if let Some(prompt_name) = &args.system_prompt {
+            debug!("Using named system prompt: {}", prompt_name);
+        } else {
+            debug!("Using default system prompt");
+        }
+    }
+
     // Combine all prompt arguments into a single string
     let user_prompt = args.prompt.join(" ");
 
-    // Initial message to Claude
-    let mut messages = vec![Message::builder()
-        .role(ConversationRole::User)
-        .content(ContentBlock::Text(user_prompt))
-        .build()
-        .context("Failed to build message")?];
+    // Initial message to Claude with system prompt first, then user prompt
+    let mut messages = vec![
+        Message::builder()
+            .role(ConversationRole::User)
+            .content(ContentBlock::Text(system_prompt))
+            .build()
+            .context("Failed to build system message")?,
+        Message::builder()
+            .role(ConversationRole::User)
+            .content(ContentBlock::Text(user_prompt))
+            .build()
+            .context("Failed to build user message")?,
+    ];
 
     // Define tool specifications using dynamic schemas
     let tools = get_dynamic_tool_specs(&schema_registry)?;
@@ -122,6 +155,7 @@ async fn main() -> Result<()> {
             let inference_config_clone = inference_config.clone();
             let tool_config_clone = tool_config.clone();
 
+            let debug_flag = args.debug;
             retry_with_backoff(
                 || async {
                     // Create request builder
@@ -134,6 +168,62 @@ async fn main() -> Result<()> {
                     // Add each message individually
                     for message in &messages_clone {
                         request_builder = request_builder.messages(message.clone());
+                    }
+
+                    // Debug: Show the request information
+                    if debug_flag {
+                        println!("\n🔍 DEBUG: Bedrock Request Details:");
+                        println!("Model ID: {}", &model_clone);
+                        println!("Messages ({}):", messages_clone.len());
+                        
+                        for (i, msg) in messages_clone.iter().enumerate() {
+                            println!("  Message {}: Role = {:?}", i + 1, msg.role());
+                            for (j, content) in msg.content().iter().enumerate() {
+                                match content {
+                                    ContentBlock::Text(text) => {
+                                        let preview = if text.len() > 100 {
+                                            format!("{}...", &text[..100])
+                                        } else {
+                                            text.clone()
+                                        };
+                                        println!("    Content {}: Text = \"{}\"", j + 1, preview);
+                                    },
+                                    ContentBlock::ToolUse(tool_use) => {
+                                        println!("    Content {}: ToolUse = {{ name: \"{}\", id: \"{}\" }}", 
+                                               j + 1, tool_use.name(), tool_use.tool_use_id());
+                                    },
+                                    ContentBlock::ToolResult(tool_result) => {
+                                        println!("    Content {}: ToolResult = {{ id: \"{}\" }}", 
+                                               j + 1, tool_result.tool_use_id());
+                                    },
+                                    _ => println!("    Content {}: Other", j + 1)
+                                }
+                            }
+                        }
+                        
+                        println!("Inference Config:");
+                        println!("  Temperature: {:?}", inference_config_clone.temperature());
+                        println!("  Top P: {:?}", inference_config_clone.top_p());
+                        println!("  Max Tokens: {:?}", inference_config_clone.max_tokens());
+                        
+                        let tools = tool_config_clone.tools();
+                        if !tools.is_empty() {
+                            println!("Tools ({}):", tools.len());
+                            for (i, tool) in tools.iter().enumerate() {
+                                match tool.as_tool_spec() {
+                                    Ok(spec) => {
+                                        println!("  Tool {}: {} - {}", 
+                                               i + 1, 
+                                               spec.name(),
+                                               spec.description().unwrap_or("no description"));
+                                    },
+                                    Err(_) => {
+                                        println!("  Tool {}: Unknown tool type", i + 1);
+                                    }
+                                }
+                            }
+                        }
+                        println!();
                     }
 
                     // Send the request
@@ -351,6 +441,7 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
 
 // Helper function to extract concise error information
 fn extract_error_summary(error_str: &str) -> String {
