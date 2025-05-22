@@ -43,6 +43,10 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
+    /// Show raw JSON sent to Bedrock
+    #[arg(short, long)]
+    debug: bool,
+
     /// Maximum number of retry attempts for throttling errors
     #[arg(long, default_value = "10")]
     max_retries: usize,
@@ -151,6 +155,7 @@ async fn main() -> Result<()> {
             let inference_config_clone = inference_config.clone();
             let tool_config_clone = tool_config.clone();
 
+            let debug_flag = args.debug;
             retry_with_backoff(
                 || async {
                     // Create request builder
@@ -163,6 +168,62 @@ async fn main() -> Result<()> {
                     // Add each message individually
                     for message in &messages_clone {
                         request_builder = request_builder.messages(message.clone());
+                    }
+
+                    // Debug: Show the request information
+                    if debug_flag {
+                        println!("\n🔍 DEBUG: Bedrock Request Details:");
+                        println!("Model ID: {}", &model_clone);
+                        println!("Messages ({}):", messages_clone.len());
+                        
+                        for (i, msg) in messages_clone.iter().enumerate() {
+                            println!("  Message {}: Role = {:?}", i + 1, msg.role());
+                            for (j, content) in msg.content().iter().enumerate() {
+                                match content {
+                                    ContentBlock::Text(text) => {
+                                        let preview = if text.len() > 100 {
+                                            format!("{}...", &text[..100])
+                                        } else {
+                                            text.clone()
+                                        };
+                                        println!("    Content {}: Text = \"{}\"", j + 1, preview);
+                                    },
+                                    ContentBlock::ToolUse(tool_use) => {
+                                        println!("    Content {}: ToolUse = {{ name: \"{}\", id: \"{}\" }}", 
+                                               j + 1, tool_use.name(), tool_use.tool_use_id());
+                                    },
+                                    ContentBlock::ToolResult(tool_result) => {
+                                        println!("    Content {}: ToolResult = {{ id: \"{}\" }}", 
+                                               j + 1, tool_result.tool_use_id());
+                                    },
+                                    _ => println!("    Content {}: Other", j + 1)
+                                }
+                            }
+                        }
+                        
+                        println!("Inference Config:");
+                        println!("  Temperature: {:?}", inference_config_clone.temperature());
+                        println!("  Top P: {:?}", inference_config_clone.top_p());
+                        println!("  Max Tokens: {:?}", inference_config_clone.max_tokens());
+                        
+                        let tools = tool_config_clone.tools();
+                        if !tools.is_empty() {
+                            println!("Tools ({}):", tools.len());
+                            for (i, tool) in tools.iter().enumerate() {
+                                match tool.as_tool_spec() {
+                                    Ok(spec) => {
+                                        println!("  Tool {}: {} - {}", 
+                                               i + 1, 
+                                               spec.name(),
+                                               spec.description().unwrap_or("no description"));
+                                    },
+                                    Err(_) => {
+                                        println!("  Tool {}: Unknown tool type", i + 1);
+                                    }
+                                }
+                            }
+                        }
+                        println!();
                     }
 
                     // Send the request
