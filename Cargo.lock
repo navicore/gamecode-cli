@@ -994,14 +994,14 @@ dependencies = [
 [[package]]
 name = "gamecode-backend"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-backend#cba72fb16f42c4ae486bc677d2bb60d501d7d436"
+source = "git+https://github.com/navicore/gamecode-backend#79942b21baac62f3d1cda32ef3bcf59d0506ab58"
 dependencies = [
  "anyhow",
  "async-trait",
  "futures-util",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "tokio",
  "uuid",
 ]
@@ -1009,7 +1009,7 @@ dependencies = [
 [[package]]
 name = "gamecode-bedrock"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-bedrock#2738ff92a380b01ef57abe003e0f309418b2fd39"
+source = "git+https://github.com/navicore/gamecode-bedrock#2edd35696750a1226bd9ce2680f7a7b2d6b7f3f3"
 dependencies = [
  "anyhow",
  "async-trait",

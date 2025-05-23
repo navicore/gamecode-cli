@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::{generate, Generator, Shell};
 use gamecode_backend::{
-    ChatRequest, ContentBlock, InferenceConfig, LLMBackend, Message as BackendMessage,
-    MessageRole as BackendMessageRole, RetryConfig, Tool as BackendTool,
+    BackendStatus, ChatRequest, ContentBlock, InferenceConfig, LLMBackend,
+    Message as BackendMessage, MessageRole as BackendMessageRole, RetryConfig, StatusCallback,
+    Tool as BackendTool,
 };
 use gamecode_bedrock::BedrockBackend;
 use gamecode_context::{
@@ -115,11 +116,11 @@ struct Args {
     new_session: bool,
 
     /// Maximum number of retry attempts for throttling errors
-    #[arg(long, default_value = "10")]
+    #[arg(long, default_value = "20")]
     max_retries: usize,
 
     /// Initial retry delay in milliseconds
-    #[arg(long, default_value = "2000")]
+    #[arg(long, default_value = "500")]
     initial_retry_delay_ms: u64,
 }
 
@@ -415,6 +416,38 @@ async fn main() -> Result<()> {
         verbose: args.verbose,
     };
 
+    // Create status callback for retry/backoff feedback
+    let status_callback: StatusCallback =
+        std::sync::Arc::new(move |status: BackendStatus| match status {
+            BackendStatus::RetryAttempt {
+                attempt,
+                max_attempts,
+                delay_ms,
+                reason,
+            } => {
+                println!(
+                    "⚠️  Retrying request (attempt {}/{}), retrying in {}ms... ({})",
+                    attempt, max_attempts, delay_ms, reason
+                );
+            }
+            BackendStatus::RateLimited {
+                attempt,
+                max_attempts,
+                delay_ms,
+            } => {
+                println!(
+                    "⚠️  Rate limited (attempt {}/{}), retrying in {}ms...",
+                    attempt, max_attempts, delay_ms
+                );
+            }
+            BackendStatus::NonRetryableError { message } => {
+                println!(
+                    "⚠️  Non-retryable error detected, not retrying: {}",
+                    message
+                );
+            }
+        });
+
     // Main conversation loop using the backend
     loop {
         debug!(
@@ -433,6 +466,7 @@ async fn main() -> Result<()> {
                 top_p: Some(0.9),
             }),
             session_id: None,
+            status_callback: Some(status_callback.clone()),
         };
 
         // Send request with retry logic
