@@ -994,7 +994,7 @@ dependencies = [
 [[package]]
 name = "gamecode-backend"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-backend#5a83f0fc6afbc1e144270f6a98195c7895502ef2"
+source = "git+https://github.com/navicore/gamecode-backend#cba72fb16f42c4ae486bc677d2bb60d501d7d436"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1009,7 +1009,7 @@ dependencies = [
 [[package]]
 name = "gamecode-bedrock"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-bedrock#cb5ac72647089a2d8f3a949d354b5942755942a9"
+source = "git+https://github.com/navicore/gamecode-bedrock#2738ff92a380b01ef57abe003e0f309418b2fd39"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1079,7 +1079,7 @@ dependencies = [
 [[package]]
 name = "gamecode-tools"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-tools#1de6c5baa6946167bf3949706852c3dda3250a79"
+source = "git+https://github.com/navicore/gamecode-tools#99eca8875d98711f98b0bfc1efe78714a78b9e99"
 dependencies = [
  "async-trait",
  "base64",
@@ -1750,12 +1750,9 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
 name = "once_cell_polyfill"
-version = "1.70.0"
+version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2611b99ab098a31bdc8be48b4f1a285ca0ced28bd5b4f23e45efa8c63b09efa5"
-dependencies = [
- "once_cell",
-]
+checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 
 [[package]]
 name = "openssl-probe"
@@ -2133,9 +2130,9 @@ dependencies = [
 
 [[package]]
 name = "rustversion"
-version = "1.0.20"
+version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eded382c5f5f786b989652c49544c4877d9f015cc22e145a5ea8ea66c2921cd2"
+checksum = "8a0d197bd2c9dc6e53b84da9556a69ba4cdfab8619eb41a8bd1cc2027a0f6b1d"
 
 [[package]]
 name = "ryu"
