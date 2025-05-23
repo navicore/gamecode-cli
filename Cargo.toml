@@ -12,6 +12,7 @@ gamecode-prompt = { git = "https://github.com/navicore/gamecode-prompt" }
 gamecode-context = { git = "https://github.com/navicore/gamecode-context" }
 gamecode-backend = { git = "https://github.com/navicore/gamecode-backend" }
 gamecode-bedrock = { git = "https://github.com/navicore/gamecode-bedrock" }
+#gamecode-bedrock = { path = "../gamecode-bedrock" }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"

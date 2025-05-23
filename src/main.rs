@@ -31,6 +31,38 @@ async fn create_backend(region: &str) -> Result<Box<dyn LLMBackend>> {
 }
 
 #[derive(ValueEnum, Clone, Debug)]
+enum Model {
+    #[value(name = "opus-4")]
+    Opus4,
+    #[value(name = "sonnet-4")]
+    Sonnet4,
+    #[value(name = "claude-3.7-sonnet")]
+    Claude37Sonnet,
+    #[value(name = "claude-3-5-sonnet")]
+    Claude35Sonnet,
+    #[value(name = "claude-3-5-haiku")]
+    Claude35Haiku,
+    #[value(name = "claude-3-sonnet")]
+    Claude3Sonnet,
+    #[value(name = "claude-3-haiku")]
+    Claude3Haiku,
+}
+
+impl Model {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Model::Opus4 => "us.anthropic.claude-opus-4-20250514-v1:0",
+            Model::Sonnet4 => "us.anthropic.claude-sonnet-4-20250514-v1:0",
+            Model::Claude37Sonnet => "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+            Model::Claude35Sonnet => "anthropic.claude-3-5-sonnet-20240620-v1:0",
+            Model::Claude35Haiku => "anthropic.claude-3-5-haiku-20241022-v1:0",
+            Model::Claude3Sonnet => "anthropic.claude-3-sonnet-20240229-v1:0",
+            Model::Claude3Haiku => "anthropic.claude-3-haiku-20240307-v1:0",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
 enum Region {
     #[value(name = "us-east-1")]
     UsEast1,
@@ -93,7 +125,7 @@ struct Args {
 
     /// The model to use
     #[arg(long)]
-    model: Option<String>,
+    model: Option<Model>,
 
     /// AWS region
     #[arg(long, default_value = "us-west-2")]
@@ -332,7 +364,11 @@ async fn main() -> Result<()> {
     let backend = create_backend(args.region.as_str()).await?;
 
     // Use default model if none specified
-    let selected_model = args.model.as_deref().unwrap_or("claude-3.7-sonnet");
+    let selected_model = args
+        .model
+        .as_ref()
+        .map(|m| m.as_str())
+        .unwrap_or("claude-3.7-sonnet");
     debug!("Using model: {}", selected_model);
 
     // Setup gamecode-tools dispatcher with schema generation
@@ -459,7 +495,7 @@ async fn main() -> Result<()> {
         let chat_request = ChatRequest {
             messages: messages.clone(),
             tools: Some(backend_tools.clone()),
-            model: args.model.clone(),
+            model: args.model.as_ref().map(|m| m.as_str().to_string()),
             inference_config: Some(InferenceConfig {
                 temperature: Some(0.7),
                 max_tokens: Some(4096),
