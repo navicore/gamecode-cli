@@ -1009,7 +1009,7 @@ dependencies = [
 [[package]]
 name = "gamecode-bedrock"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-bedrock#68e1f7da764747e50af7fc6c9c2b9990e5881cfa"
+source = "git+https://github.com/navicore/gamecode-bedrock#714f83558f8a98be90db6b726eac6dbacbe7fb1f"
 dependencies = [
  "anyhow",
  "async-trait",
