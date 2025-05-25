@@ -14,7 +14,8 @@ gamecode-backend = { git = "https://github.com/navicore/gamecode-backend" }
 gamecode-bedrock = { git = "https://github.com/navicore/gamecode-bedrock" }
 #gamecode-bedrock = { path = "../gamecode-bedrock" }
 tokio = { version = "1", features = ["full"] }
-flag-rs = "0.7"
+#flag-rs = "0.7"
+flag-rs = { path = "../flag-rs" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -24,5 +25,5 @@ tracing-subscriber = "0.3"
 chrono = "0.4"
 
 [[bin]]
-name = "gamecode-cli"
+name = "gamecode"
 path = "src/main.rs"

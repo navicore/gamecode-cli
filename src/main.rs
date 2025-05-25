@@ -64,12 +64,12 @@ fn convert_tools_to_backend(schema_registry: &ToolSchemaRegistry) -> Result<Vec<
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Fix flag-rs bug: if GAMECODE_CLI_COMPLETE is set, copy it to GAMECODE-CLI_COMPLETE
-    if let Ok(value) = std::env::var("GAMECODE_CLI_COMPLETE") {
-        unsafe {
-            std::env::set_var("GAMECODE-CLI_COMPLETE", value);
-        }
-    }
+    // // Fix flag-rs bug: if GAMECODE_CLI_COMPLETE is set, copy it to GAMECODE-CLI_COMPLETE
+    // if let Ok(value) = std::env::var("GAMECODE_CLI_COMPLETE") {
+    //     unsafe {
+    //         std::env::set_var("GAMECODE-CLI_COMPLETE", value);
+    //     }
+    // }
     
     let app = build_cli();
     
@@ -83,7 +83,8 @@ async fn main() -> Result<()> {
 }
 
 pub fn build_cli() -> Command {
-    let mut root = CommandBuilder::new("gamecode-cli")
+    //let mut root = CommandBuilder::new("gamecode-cli")
+    let mut root = CommandBuilder::new("gamecode")
         .short("AI-powered CLI assistant")
         .long("An experimental client for AWS Bedrock Anthropic Claude models used as an agentic assistant")
         
