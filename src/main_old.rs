@@ -1,5 +1,5 @@
 use anyhow::{Context as AnyhowContext, Result};
-use flag_rs::{Command, CommandBuilder, CompletionResult, Context, Flag, FlagType, FlagValue};
+use flag_rs::{Command, CommandBuilder, CompletionResult, Context, Flag, FlagType, FlagValue, Shell};
 use gamecode_backend::{
     BackendStatus, ChatRequest, ContentBlock, InferenceConfig, LLMBackend,
     Message as BackendMessage, MessageRole as BackendMessageRole, RetryConfig, StatusCallback,
@@ -18,8 +18,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
 use uuid::Uuid;
-
-mod cmd;
 
 // Backend factory function to create the appropriate backend
 async fn create_backend(region: &str) -> Result<Box<dyn LLMBackend>> {
@@ -75,15 +73,15 @@ async fn main() -> Result<()> {
     
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Err(e) = app.execute(args) {
-        eprintln!("Error?: {}", e);
+        eprintln!("Error: {}", e);
         std::process::exit(1);
     }
     
     Ok(())
 }
 
-pub fn build_cli() -> Command {
-    let mut root = CommandBuilder::new("gamecode-cli")
+fn build_cli() -> Command {
+    CommandBuilder::new("gamecode-cli")
         .short("AI-powered CLI assistant")
         .long("An experimental client for AWS Bedrock Anthropic Claude models used as an agentic assistant")
         
@@ -142,14 +140,28 @@ pub fn build_cli() -> Command {
                         let mut result = CompletionResult::new();
                         for prompt_name in prompts {
                             if prompt_name.starts_with(prefix) {
-                                result = result.add(prompt_name);
+                                // Try to get prompt info for description
+                                if let Ok(info) = manager.get_prompt_info(&prompt_name) {
+                                    let size_kb = info.size / 1024;
+                                    let desc = format!("{}KB", size_kb);
+                                    // Sanitize description
+                                    let sanitized_desc = desc.chars()
+                                        .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { '_' })
+                                        .collect::<String>();
+                                    result = result.add_with_description(
+                                        prompt_name,
+                                        sanitized_desc
+                                    );
+                                } else {
+                                    result = result.add(prompt_name);
+                                }
                             }
                         }
                         Ok(result)
                     }
-                    Err(e) => panic!("Failed to list prompts: {}", e),
+                    Err(_) => Ok(CompletionResult::new()),
                 },
-                Err(e) => panic!("Failed to create prompt manager: {}", e),
+                Err(_) => Ok(CompletionResult::new()),
             }
         })
         
@@ -159,19 +171,29 @@ pub fn build_cli() -> Command {
                 Ok(manager) => match manager.list_sessions() {
                     Ok(sessions) => {
                         let mut result = CompletionResult::new();
-                        let total = sessions.len();
                         for session_info in sessions {
                             let id_str = session_info.id.to_string();
                             if id_str.starts_with(prefix) {
-                                // Debug: log exactly what we're adding
-                                eprintln!("DEBUG: Adding session ID: '{}'", id_str);
-                                eprintln!("DEBUG: ID bytes: {:?}", id_str.as_bytes());
-                                eprintln!("DEBUG: ID len: {}", id_str.len());
-                                
-                                result = result.add(id_str);
+                                // Format system time for display
+                                // let created = chrono::DateTime::<chrono::Utc>::from(session_info.created_at)
+                                //     .format("%Y-%m-%d %H:%M")
+                                //     .to_string();
+                                //let desc = format!("{} msgs created at {}", session_info.message_count, created);
+                                // Sanitize description
+                                // let sanitized_desc = desc.chars()
+                                //     .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { '_' })
+                                //     .collect::<String>();
+                                // result = result.add_with_description(
+                                //     id_str,
+                                //     sanitized_desc
+                                // );
+                                result = result.add(
+                                    //id_str,
+                                    "abcdef"
+                                );
+
                             }
                         }
-                        eprintln!("DEBUG: Total sessions: {}", total);
                         Ok(result)
                     }
                     Err(e) => panic!("Failed to list sessions: {}", e),
@@ -182,23 +204,34 @@ pub fn build_cli() -> Command {
         
         // Dynamic completions for model
         .flag_completion("model", |_ctx, prefix| {
+            // In the future, this could query the backend
             let models = vec![
-                "opus-4",
-                "claude-3.7-sonnet",
-                "claude-3.5-sonnet",
-                "claude-3.5-haiku",
-                "claude-3-sonnet",
-                "claude-3-haiku",
+                ("opus-4", "Opus 4"),
+                ("claude-3.7-sonnet", "3.7 Sonnet"),
+                ("claude-3.5-sonnet", "3.5 Sonnet"),
+                ("claude-3.5-haiku", "3.5 Haiku"),
+                ("claude-3-sonnet", "3 Sonnet"),
+                ("claude-3-haiku", "3 Haiku"),
             ];
             
             let mut result = CompletionResult::new();
-            for model in models {
+            for (model, desc) in models {
                 if model.starts_with(prefix) {
-                    result = result.add(model);
+                    // Sanitize the description - replace non-alphanumeric with underscore
+                    let sanitized_desc = desc.chars()
+                        .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { '_' })
+                        .collect::<String>();
+                    result = result.add_with_description(model, &sanitized_desc);
                 }
             }
             Ok(result)
         })
+        
+        // Subcommands
+        .subcommand(build_completion_command())
+        .subcommand(build_models_command())
+        .subcommand(build_prompts_command())
+        .subcommand(build_sessions_command())
         
         // Main command handler
         .run(|ctx| {
@@ -211,12 +244,260 @@ pub fn build_cli() -> Command {
             })
         })
         
-        .build();
-    
-    // Register all subcommands
-    cmd::register_commands(&mut root);
-    
-    root
+        .build()
+}
+
+fn build_completion_command() -> Command {
+    CommandBuilder::new("completion")
+        .aliases(vec!["completions"])
+        .short("Generate shell completion scripts")
+        .long("Generate shell completion scripts for your shell")
+        .arg_completion(|_ctx, prefix| {
+            let shells = vec![
+                ("bash", "Bourne Again Shell"),
+                ("zsh", "Z Shell"),
+                ("fish", "Fish Shell"),
+            ];
+            
+            let mut result = CompletionResult::new();
+            for (shell, desc) in shells {
+                if shell.starts_with(prefix) {
+                    // Sanitize description
+                    let sanitized_desc = desc.chars()
+                        .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { '_' })
+                        .collect::<String>();
+                    result = result.add_with_description(shell, &sanitized_desc);
+                }
+            }
+            Ok(result)
+        })
+        .run(|ctx| {
+            let shell_name = ctx.args().first()
+                .ok_or_else(|| flag_rs::Error::ArgumentParsing(
+                    "Shell name required (bash, zsh, or fish)".to_string()
+                ))?;
+            
+            let shell = match shell_name.as_str() {
+                "bash" => Shell::Bash,
+                "zsh" => Shell::Zsh,
+                "fish" => Shell::Fish,
+                _ => return Err(flag_rs::Error::ArgumentParsing(
+                    format!("Unsupported shell: {}", shell_name)
+                )),
+            };
+            
+            let root = build_cli();
+            let completion = root.generate_completion(shell);
+            // Fix flag-rs bug: replace hyphens with underscores in shell identifiers
+            let fixed_completion = completion
+                .replace("GAMECODE-CLI_COMPLETE", "GAMECODE_CLI_COMPLETE")
+                .replace("_gamecode-cli_complete", "_gamecode_cli_complete");
+            println!("{}", fixed_completion);
+            
+            Ok(())
+        })
+        .build()
+}
+
+fn build_models_command() -> Command {
+    CommandBuilder::new("models")
+        .short("List available models")
+        .run(|_ctx| {
+            println!("Available models:");
+            println!("  opus-4              - Claude Opus 4 (cross-region)");
+            println!("  claude-3.7-sonnet   - Claude 3.7 Sonnet (cross-region)");
+            println!("  claude-3.5-sonnet   - Claude 3.5 Sonnet");
+            println!("  claude-3.5-haiku    - Claude 3.5 Haiku");
+            println!("  claude-3-sonnet     - Claude 3 Sonnet");
+            println!("  claude-3-haiku      - Claude 3 Haiku");
+            Ok(())
+        })
+        .build()
+}
+
+fn build_prompts_command() -> Command {
+    CommandBuilder::new("prompts")
+        .short("Manage prompts")
+        .subcommand(
+            CommandBuilder::new("list")
+                .short("List available prompts")
+                .run(|_ctx| {
+                    let prompt_manager = PromptManager::new()
+                        .map_err(|e| flag_rs::Error::Custom(Box::new(e)))?;
+                    let prompts = prompt_manager.list_prompts()
+                        .map_err(|e| flag_rs::Error::Custom(Box::new(e)))?;
+                    
+                    println!("Available prompts:");
+                    for prompt_name in prompts {
+                        if let Ok(info) = prompt_manager.get_prompt_info(&prompt_name) {
+                            println!("  {} ({} bytes)", prompt_name, info.size);
+                        } else {
+                            println!("  {}", prompt_name);
+                        }
+                    }
+                    Ok(())
+                })
+                .build()
+        )
+        .subcommand(
+            CommandBuilder::new("show")
+                .short("Show a specific prompt")
+                .arg_completion(|_ctx, prefix| {
+                    match PromptManager::new() {
+                        Ok(manager) => match manager.list_prompts() {
+                            Ok(prompts) => {
+                                let mut result = CompletionResult::new();
+                                for prompt_name in prompts {
+                                    if prompt_name.starts_with(prefix) {
+                                        // Try extreme sanitization on the value too
+                                        let sanitized_name = prompt_name.chars()
+                                            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                                            .collect::<String>();
+                                        eprintln!("DEBUG: Original: '{}', Sanitized: '{}'", prompt_name, sanitized_name);
+                                        result = result.add(sanitized_name);
+                                    }
+                                }
+                                Ok(result)
+                            }
+                            Err(_) => Ok(CompletionResult::new()),
+                        },
+                        Err(_) => Ok(CompletionResult::new()),
+                    }
+                })
+                .run(|ctx| {
+                    let name = ctx.args().first()
+                        .ok_or_else(|| flag_rs::Error::ArgumentParsing(
+                            "Prompt name required".to_string()
+                        ))?;
+                    
+                    let prompt_manager = PromptManager::new()
+                        .map_err(|e| flag_rs::Error::Custom(Box::new(e)))?;
+                    let content = prompt_manager.load_prompt(name)
+                        .map_err(|e| flag_rs::Error::Custom(Box::new(e)))?;
+                    
+                    println!("{}", content);
+                    Ok(())
+                })
+                .build()
+        )
+        .build()
+}
+
+fn build_sessions_command() -> Command {
+    CommandBuilder::new("sessions")
+        .short("Manage sessions")
+        .subcommand(
+            CommandBuilder::new("list")
+                .short("List available sessions")
+                .run(|_ctx| {
+                    let session_manager = SessionManager::new()
+                        .map_err(|e| flag_rs::Error::Custom(Box::new(e)))?;
+                    let sessions = session_manager.list_sessions()
+                        .map_err(|e| flag_rs::Error::Custom(Box::new(e)))?;
+                    
+                    println!("Available sessions:");
+                    for session_info in sessions {
+                        let created = chrono::DateTime::<chrono::Utc>::from(session_info.created_at)
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string();
+                        println!("  {} - {} ({} messages)",
+                            session_info.id,
+                            created,
+                            session_info.message_count
+                        );
+                    }
+                    Ok(())
+                })
+                .build()
+        )
+        .subcommand(
+            CommandBuilder::new("show")
+                .short("Show session details")
+                .arg_completion(|_ctx, prefix| {
+                    match SessionManager::new() {
+                        Ok(manager) => match manager.list_sessions() {
+                            Ok(sessions) => {
+                                let mut result = CompletionResult::new();
+                                for session in sessions {
+                                    let id_str = session.id.to_string();
+                                    if id_str.starts_with(prefix) {
+                                        result = result.add(id_str);
+                                    }
+                                }
+                                Ok(result)
+                            }
+                            Err(_) => Ok(CompletionResult::new()),
+                        },
+                        Err(_) => Ok(CompletionResult::new()),
+                    }
+                })
+                .run(|ctx| {
+                    let session_id_str = ctx.args().first()
+                        .ok_or_else(|| flag_rs::Error::ArgumentParsing(
+                            "Session ID required".to_string()
+                        ))?;
+                    
+                    let session_id = Uuid::parse_str(session_id_str)
+                        .map_err(|e| flag_rs::Error::Custom(Box::new(e)))?;
+                    
+                    let mut session_manager = SessionManager::new()
+                        .map_err(|e| flag_rs::Error::Custom(Box::new(e)))?;
+                    let session = session_manager.load_session(&session_id)
+                        .map_err(|e| flag_rs::Error::Custom(Box::new(e)))?;
+                    
+                    println!("Session: {}", session.id);
+                    println!("Created: {}", session.created_at.format("%Y-%m-%d %H:%M:%S"));
+                    println!("Messages: {}", session.messages.len());
+                    
+                    for (i, msg) in session.messages.iter().enumerate() {
+                        println!("\n[{}] {:?}:", i + 1, msg.role);
+                        println!("{}", msg.content);
+                    }
+                    
+                    Ok(())
+                })
+                .build()
+        )
+        .subcommand(
+            CommandBuilder::new("delete")
+                .short("Delete a session")
+                .arg_completion(|_ctx, prefix| {
+                    match SessionManager::new() {
+                        Ok(manager) => match manager.list_sessions() {
+                            Ok(sessions) => {
+                                let mut result = CompletionResult::new();
+                                for session in sessions {
+                                    let id_str = session.id.to_string();
+                                    if id_str.starts_with(prefix) {
+                                        result = result.add(id_str);
+                                    }
+                                }
+                                Ok(result)
+                            }
+                            Err(_) => Ok(CompletionResult::new()),
+                        },
+                        Err(_) => Ok(CompletionResult::new()),
+                    }
+                })
+                .run(|ctx| {
+                    let session_id_str = ctx.args().first()
+                        .ok_or_else(|| flag_rs::Error::ArgumentParsing(
+                            "Session ID required".to_string()
+                        ))?;
+                    
+                    let session_id = Uuid::parse_str(session_id_str)
+                        .map_err(|e| flag_rs::Error::Custom(Box::new(e)))?;
+                    
+                    // SessionManager doesn't expose delete_session directly
+                    // For now, we'll just print a message
+                    // TODO: Add delete_session to SessionManager or use storage directly
+                    println!("Session deletion not yet implemented");
+                    println!("Would delete session: {}", session_id);
+                    Ok(())
+                })
+                .build()
+        )
+        .build()
 }
 
 async fn run_main_command(ctx: &Context) -> Result<()> {
