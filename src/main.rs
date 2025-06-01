@@ -20,6 +20,7 @@ use tracing::debug;
 use uuid::Uuid;
 
 mod cmd;
+mod mcp_client;
 
 // Backend factory function to create the appropriate backend
 async fn create_backend(region: &str) -> Result<Box<dyn LLMBackend>> {
