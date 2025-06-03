@@ -72,27 +72,41 @@ Create a new project structure:
 gamecode-cli "Create a basic project structure for a Rust CLI application with error handling and configuration"
 ```
 
-## Available Tools
+## Tool Support
 
-GameCode CLI integrates with gamecode-tools to provide the following capabilities:
+GameCode CLI supports tools through two mechanisms:
 
-- **File Operations**
-  - `file_read`: Read file content
-  - `file_write`: Write content to a file
-  - `file_patch`: Modify part of a file
-  - `file_move`: Move or rename files
+### 1. Built-in Tools (Default)
+Uses the integrated gamecode-tools library for basic file and shell operations.
 
-- **Directory Operations**
-  - `directory_list`: List directory contents
-  - `directory_make`: Create directories
+### 2. MCP (Model Context Protocol) Servers (Recommended)
+Use external MCP servers for more flexible and extensible tool support.
 
-- **Search Operations**
-  - `file_find`: Find files matching a pattern
-  - `file_grep`: Search file contents for patterns
-  - `file_diff`: Compare files
+#### Setting up MCP Tools
 
-- **Shell Operations**
-  - `shell`: Execute shell commands
+1. **Install an MCP server** (e.g., gamecode-mcp):
+   ```bash
+   cargo install gamecode-mcp
+   ```
+
+2. **Configure the MCP server**:
+   ```bash
+   gamecode mcp add gamecode gamecode-mcp
+   ```
+
+3. **Create a tools.yaml** in your working directory to define available tools
+
+4. **Use MCP mode**:
+   ```bash
+   gamecode --use-mcp "Your prompt here"
+   ```
+
+#### Managing MCP Servers
+
+- List configured servers: `gamecode mcp list`
+- Add a server: `gamecode mcp add <name> <command> [args...]`
+- Remove a server: `gamecode mcp remove <name>`
+- Test a server: `gamecode mcp test <name>`
 
 ## Architecture
 

@@ -1,0 +1,77 @@
+# Example tools configuration for gamecode-mcp2
+
+tools:
+  # Built-in math tools
+  - name: add
+    description: Add two numbers together
+    command: internal
+    args:
+      - name: a
+        description: First number to add
+        required: true
+        type: number
+        cli_flag: null
+      - name: b
+        description: Second number to add
+        required: true
+        type: number
+        cli_flag: null
+    internal_handler: add
+    example_output:
+      result: 8
+      operation: "addition"
+
+  - name: multiply
+    description: Multiply two numbers
+    command: internal
+    args:
+      - name: a
+        description: First number to multiply
+        required: true
+        type: number
+        cli_flag: null
+      - name: b
+        description: Second number to multiply
+        required: true
+        type: number
+        cli_flag: null
+    internal_handler: multiply
+    example_output:
+      result: 42
+      operation: "multiplication"
+
+  # File system tool
+  - name: list_files
+    description: List files in a directory
+    command: internal
+    args:
+      - name: path
+        description: Directory path (defaults to current directory)
+        required: false
+        type: string
+        default: "."
+        cli_flag: null
+    internal_handler: list_files
+    example_output:
+      path: "."
+      files:
+        - name: "example.txt"
+          is_dir: false
+          size: 1024
+        - name: "subfolder"
+          is_dir: true
+          size: 4096
+
+  # Example external tool
+  - name: echo_message
+    description: Echo a message (example of external command)
+    command: echo
+    args:
+      - name: message
+        description: Message to echo
+        required: true
+        type: string
+        cli_flag: null  # Positional argument
+    example_output:
+      output: "Hello, world!"
+      status: "success"

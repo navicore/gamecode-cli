@@ -4,10 +4,9 @@ version = "0.2.0"
 edition = "2024"
 license = "MIT"
 authors = ["Ed Sweeney <ed@onextent.com>"]
-description = "CLI for AWS Bedrock Anthropic Claude with gamecode-tools integration"
+description = "CLI for AWS Bedrock Anthropic Claude with MCP (Model Context Protocol) integration"
 
 [dependencies]
-gamecode-tools = { git = "https://github.com/navicore/gamecode-tools" }
 gamecode-prompt = { git = "https://github.com/navicore/gamecode-prompt" }
 gamecode-context = { git = "https://github.com/navicore/gamecode-context" }
 gamecode-backend = { git = "https://github.com/navicore/gamecode-backend" }
@@ -22,7 +21,6 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 chrono = "0.4"
 home = "0.5"
-rmcp = { version = "0.1" }
 
 [[bin]]
 name = "gamecode"
