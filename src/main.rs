@@ -11,8 +11,8 @@ use gamecode_context::{
     SessionManager,
 };
 use gamecode_prompt::PromptManager;
-use gamecode_tools::{create_bedrock_dispatcher_with_schemas, schema::ToolSchemaRegistry};
-use serde_json::{json, Value};
+use serde_json::Value;
+use crate::mcp_tool_dispatcher::McpToolDispatcher;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +21,9 @@ use uuid::Uuid;
 
 mod cmd;
 mod mcp_client;
+mod mcp_protocol;
+mod mcp_tool_registry;
+mod mcp_tool_dispatcher;
 
 // Backend factory function to create the appropriate backend
 async fn create_backend(region: &str) -> Result<Box<dyn LLMBackend>> {
@@ -48,20 +51,6 @@ fn map_model_name(model: &str) -> String {
 }
 
 // Helper function to convert gamecode-tools schemas to backend format
-fn convert_tools_to_backend(schema_registry: &ToolSchemaRegistry) -> Result<Vec<BackendTool>> {
-    let mut backend_tools = Vec::new();
-
-    for bedrock_spec in schema_registry.to_bedrock_specs() {
-        let tool = BackendTool {
-            name: bedrock_spec.name,
-            description: bedrock_spec.description,
-            input_schema: bedrock_spec.input_schema.json,
-        };
-        backend_tools.push(tool);
-    }
-
-    Ok(backend_tools)
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -223,23 +212,20 @@ pub fn build_cli() -> Command {
 
 async fn run_main_command(ctx: &Context) -> Result<()> {
     // Extract prompt from remaining arguments
-    let prompt_parts = ctx.args();
+    let mut prompt_parts = ctx.args();
+    
+    let prompt_parts = prompt_parts.to_vec();
+    
     if prompt_parts.is_empty() {
         return Err(anyhow::anyhow!("Prompt is required when not using a subcommand"));
     }
     
     // Extract flags
-    let verbose = ctx.flag("verbose")
-        .and_then(|s| s.parse::<bool>().ok())
-        .unwrap_or(false);
+    let verbose = ctx.flag("verbose").is_some();
         
-    let new_session = ctx.flag("new-session")
-        .and_then(|s| s.parse::<bool>().ok())
-        .unwrap_or(false);
+    let new_session = ctx.flag("new-session").is_some();
         
-    let no_tools = ctx.flag("no-tools")
-        .and_then(|s| s.parse::<bool>().ok())
-        .unwrap_or(false);
+    let no_tools = ctx.flag("no-tools").is_some();
         
     let max_retries = ctx.flag("max-retries")
         .and_then(|s| s.parse::<usize>().ok())
@@ -278,21 +264,46 @@ async fn run_main_command(ctx: &Context) -> Result<()> {
     // Detect cross-region models
     let uses_cross_region_model = selected_model.starts_with("us.");
     
-    // Setup gamecode-tools dispatcher with schema generation
-    let (dispatcher, schema_registry) = if no_tools {
+    // Setup tools - always use MCP
+    let backend_tools: Vec<BackendTool>;
+    let mcp_dispatcher: Option<Arc<McpToolDispatcher>>;
+    
+    if no_tools {
         eprintln!("ℹ️  Running without tools (--no-tools flag)");
-        let dispatcher = gamecode_tools::jsonrpc::Dispatcher::new();
-        let schema_registry = gamecode_tools::schema::ToolSchemaRegistry::new();
-        (dispatcher, schema_registry)
+        backend_tools = Vec::new();
+        mcp_dispatcher = None;
     } else {
-        // For now, always use the full tool set
-        // TODO: Add minimal dispatcher when available in gamecode-tools
-        if uses_cross_region_model {
-            eprintln!("⚠️  Using full tool set with cross-region model. Consider using --no-tools for better performance.");
+        eprintln!("🔌 Using MCP servers for tools");
+        
+        // Try to create MCP dispatcher and get tools
+        match McpToolDispatcher::new().await {
+            Ok(dispatcher) => {
+                let registry = dispatcher.get_registry().await;
+                let registry_lock = registry.lock().await;
+                backend_tools = registry_lock.to_bedrock_tools();
+                
+                if backend_tools.is_empty() {
+                    eprintln!("⚠️  Warning: No tools available from MCP servers");
+                    eprintln!("   Configure servers with: gamecode mcp add <name> <command>");
+                    eprintln!("   Example: gamecode mcp add gamecode-mcp2 /path/to/gamecode-mcp2");
+                } else {
+                    eprintln!("   {} tools available from MCP servers", backend_tools.len());
+                }
+                
+                drop(registry_lock);
+                mcp_dispatcher = Some(Arc::new(dispatcher));
+            }
+            Err(e) => {
+                eprintln!("⚠️  Warning: Failed to initialize MCP: {}", e);
+                eprintln!("   Continuing without tools. To enable tools:");
+                eprintln!("   1. Install MCP servers (e.g., cargo install --path ../gamecode-mcp2)");
+                eprintln!("   2. Configure servers with: gamecode mcp add <name> <command>");
+                eprintln!("   3. Ensure tools.yaml exists in your working directory");
+                backend_tools = Vec::new();
+                mcp_dispatcher = None;
+            }
         }
-        create_bedrock_dispatcher_with_schemas()
-    };
-    let dispatcher: Arc<gamecode_tools::jsonrpc::Dispatcher> = Arc::new(dispatcher);
+    }
     
     // Setup session management
     let mut session_manager = SessionManager::new()
@@ -368,12 +379,7 @@ async fn run_main_command(ctx: &Context) -> Result<()> {
         messages.push(message);
     }
     
-    // Convert tools from gamecode-tools to backend format
-    let backend_tools = if no_tools {
-        Vec::new()
-    } else {
-        convert_tools_to_backend(&schema_registry)?
-    };
+    // Tools are already converted in the setup phase above
     
     // Create retry configuration
     let retry_config = RetryConfig {
@@ -478,14 +484,6 @@ async fn run_main_command(ctx: &Context) -> Result<()> {
         // Execute tool calls
         let mut tool_results = Vec::new();
         for tool_call in &response.tool_calls {
-            // Convert to JSONRPC format
-            let jsonrpc_request = json!({
-                "jsonrpc": "2.0",
-                "method": tool_call.name,
-                "params": tool_call.input,
-                "id": 1
-            });
-            
             // Show tool execution info
             if verbose {
                 println!(
@@ -502,34 +500,33 @@ async fn run_main_command(ctx: &Context) -> Result<()> {
             }
             
             debug!("Executing tool: {}", tool_call.name);
-            let result = dispatcher
-                .dispatch(&jsonrpc_request.to_string())
-                .await
-                .context("Failed to execute tool")?;
             
-            // Parse result
-            let parsed_result: Value =
-                serde_json::from_str(&result).context("Failed to parse tool result")?;
-            
-            // Show results based on verbosity
-            if verbose {
-                println!(
-                    "\n✅ Tool result for {}: {}",
-                    tool_call.name,
-                    serde_json::to_string_pretty(
-                        parsed_result.get("result").unwrap_or(&parsed_result)
-                    )
-                    .unwrap_or_else(|_| "<invalid json>".to_string())
-                );
+            let result_content = if let Some(mcp_dispatcher) = &mcp_dispatcher {
+                // Use MCP dispatcher
+                match mcp_dispatcher.call_tool(&tool_call.name, tool_call.input.clone()).await {
+                    Ok(result) => {
+                        // Show results based on verbosity
+                        let result_str = match &result {
+                            Value::String(s) => s.clone(),
+                            other => serde_json::to_string_pretty(other)
+                                .unwrap_or_else(|_| "null".to_string()),
+                        };
+                        
+                        if verbose {
+                            println!("\n✅ Tool result for {}: {}", tool_call.name, result_str);
+                        } else {
+                            println!("\n✅ Tool {} completed successfully", tool_call.name);
+                        }
+                        result_str
+                    }
+                    Err(e) => {
+                        eprintln!("\n❌ Tool error: {}", e);
+                        format!("Tool execution failed: {}", e)
+                    }
+                }
             } else {
-                println!("\n✅ Tool {} completed successfully", tool_call.name);
-            }
-            
-            // Extract result content
-            let result_content = if let Some(result) = parsed_result.get("result") {
-                result.to_string()
-            } else {
-                parsed_result.to_string()
+                eprintln!("\n❌ No tool dispatcher available");
+                "Tool execution failed: no dispatcher".to_string()
             };
             
             tool_results.push(ContentBlock::ToolResult {
