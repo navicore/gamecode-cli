@@ -792,7 +792,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cea14ef9355e3beab063703aa9dab15afd25f0667c341310c1e5274bb1d0da18"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -938,7 +938,7 @@ dependencies = [
 [[package]]
 name = "gamecode-context"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-context#c28a18d20bd11f9ff0d02cebd246e7fd52085035"
+source = "git+https://github.com/navicore/gamecode-context#1d0a70c142c4cc2749c54ad933e4f5d4256b8cc3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1856,7 +1856,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
