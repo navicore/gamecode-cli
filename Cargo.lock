@@ -906,7 +906,7 @@ dependencies = [
 [[package]]
 name = "gamecode-bedrock"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-bedrock#ba6c1f9654bf9bafa1ed38e16fd875b7657459f3"
+source = "git+https://github.com/navicore/gamecode-bedrock#f16340b41f2e4e40fa2989997a4422358215b7a6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1267,7 +1267,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "tokio",
  "tower-service",
  "tracing",
@@ -1868,7 +1868,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
