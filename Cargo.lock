@@ -932,7 +932,7 @@ dependencies = [
 [[package]]
 name = "gamecode-prompt"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-prompt#9ba906529a0e171ec6f6cdcc1860d682f1089e6a"
+source = "git+https://github.com/navicore/gamecode-prompt#dbb4ffccdd1b71dd78895e0acfd2b04d3688bf9f"
 dependencies = [
  "anyhow",
  "handlebars",
