@@ -916,7 +916,7 @@ dependencies = [
 [[package]]
 name = "gamecode-context"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-context#51af6aaf3445b103d341e1341069199c791d7184"
+source = "git+https://github.com/navicore/gamecode-context#dfba12d117ef199a144419a97e9db80f3a7ab41b"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1231,7 +1231,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -1797,7 +1797,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
