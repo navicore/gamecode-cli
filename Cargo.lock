@@ -861,7 +861,7 @@ dependencies = [
 [[package]]
 name = "gamecode-backend"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-backend#7814dd2e122ca151bbc82df5ae1cd423b0ab45c3"
+source = "git+https://github.com/navicore/gamecode-backend#0db6bc3612a42150864a68daa26cc3b0fb2a0093"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -876,7 +876,7 @@ dependencies = [
 [[package]]
 name = "gamecode-bedrock"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-bedrock#f16340b41f2e4e40fa2989997a4422358215b7a6"
+source = "git+https://github.com/navicore/gamecode-bedrock#71c9d5733fee6e90ed2ba1d808a6c5331d1c3741"
 dependencies = [
  "anyhow",
  "async-trait",
