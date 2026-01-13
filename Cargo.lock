@@ -916,7 +916,7 @@ dependencies = [
 [[package]]
 name = "gamecode-context"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-context#1fcbe0cbaed09ab5e8e4b827cce4a4bbf3221b5f"
+source = "git+https://github.com/navicore/gamecode-context#35954dd6133921b49df8c01cadcce0e288723783"
 dependencies = [
  "anyhow",
  "chrono",
