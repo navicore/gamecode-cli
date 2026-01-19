@@ -932,7 +932,7 @@ dependencies = [
 [[package]]
 name = "gamecode-prompt"
 version = "0.1.0"
-source = "git+https://github.com/navicore/gamecode-prompt#fe10ba975591cbad1564848db339547ce6e05b3c"
+source = "git+https://github.com/navicore/gamecode-prompt#8f0143b9b2c3dc39207244e048c6dbae0b0645cb"
 dependencies = [
  "anyhow",
  "handlebars",
@@ -1022,9 +1022,9 @@ dependencies = [
 
 [[package]]
 name = "handlebars"
-version = "6.3.2"
+version = "6.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "759e2d5aea3287cb1190c8ec394f42866cb5bf74fcbf213f354e3c856ea26098"
+checksum = "9b3f9296c208515b87bd915a2f5d1163d4b3f863ba83337d7713cf478055948e"
 dependencies = [
  "derive_builder",
  "log",
