@@ -781,9 +781,9 @@ checksum = "7fd99930f64d146689264c637b5af2f0233a933bef0d8570e2526bf9e083192d"
 
 [[package]]
 name = "flag-rs"
-version = "0.8.4"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "402467c136164dcc84f7a1720b1b2c640ac4271279082c0a9d4958d36ab3d66e"
+checksum = "b349a38506b11875e3b5f779b2e817c875de9189773ecad6b86a0e80606e2d2f"
 
 [[package]]
 name = "fnv"
@@ -1259,7 +1259,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "tokio",
  "tower-service",
  "tracing",
@@ -1838,7 +1838,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
